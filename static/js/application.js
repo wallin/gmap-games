@@ -65,10 +65,6 @@ GM.createMap = function (lat, lon, zoomlevel, id) {
 };
 
 GM.mapClusterer = {
-  makeCluster: function (markers) {
-    
-  },
-
   createClusterLayer: function (map, markers) {
     var clusters  = [];
     var vectors = [];
@@ -84,12 +80,21 @@ GM.mapClusterer = {
       clusters.push(new GM.ThinMarker(id++, new google.maps.LatLng(item[0], item[1]), null, 'cluster'));
     }
 
+    _.each(markers, function (item, i) {
+      var pos = root.centroids[root.assignments[i]];
+      item.realPos = item.pos;
+      item.pos = new google.maps.LatLng(pos[0], pos[1]);
+    });
+
+    GM.mapController.moveMarkers(markers);
+
     return new GM.MarkerOverlay(map, clusters);
   }
 };
 
 GM.mapController = {
   map: null,
+  markers: null,
   activeBoundaryPoints: null,
   activeBoundaryPolygon: null,
   objectOverlay: null,
@@ -118,8 +123,8 @@ GM.mapController = {
 
   /****** Marker operations ******/
   setMarkers: function (markers) {
-    this.objectOverlay = new GM.MarkerOverlay(this.map, markers);
-    this.clusterOverlay = new GM.mapClusterer.createClusterLayer(this.map, markers);
+    this.markers = markers;
+    this.objectOverlay = new GM.MarkerOverlay(this.map, this.markers);
   },
 
   moveMarkers: function (markers) {
@@ -133,6 +138,31 @@ GM.mapController = {
       }
     }
 
+  },
+
+
+  /****** Cluster operations ******/
+  toggleClusterLayer: function () {
+    if (this.clusterOverlay) {
+      this.removeClusterLayer();
+    }
+    else {
+      this.addClusterLayer();
+    }
+  },
+  addClusterLayer: function () {
+    this.clusterOverlay = new GM.mapClusterer.createClusterLayer(this.map, this.markers);
+  },
+
+  removeClusterLayer: function () {
+    _.each(this.markers, function (item) {
+      if (item.realPos) {
+        item.pos = item.realPos;
+      }
+    });
+    this.moveMarkers(this.markers);
+    this.clusterOverlay.setMap(null);
+    this.clusterOverlay = null;
   },
 
   /****** Boundary mask operations  ******/
@@ -180,8 +210,11 @@ GM.mapController = {
   }
 };
 
+
+/******************************************************************************/
+
 $(function () {
-  var map = GM.createMap(55.588047, 13.000946, 10, 'gmap');
+  var map = GM.createMap(61.588047, 14.000946, 5, 'gmap');
   var c = GM.mapController.init(map);
 
   var mlm = new GM.Boundary('Malmö', [ malmo.geometry.coordinates, storp.geometry.coordinates]);
@@ -208,10 +241,7 @@ $(function () {
   }
 
   $('#animate').click(function () {
-    _.each(markers, function (mrk) {
-      mrk.pos = movePos(mrk.pos);
-    });
-    c.moveMarkers(markers);
+    c.toggleClusterLayer();
   });
 
 });
