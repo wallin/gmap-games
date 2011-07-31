@@ -8,6 +8,7 @@ javascripts:
     - static/js/lib/jquery-min.js
     - static/js/lib/underscore-min.js
     - static/js/lib/backbone-min.js
+    - static/js/lib/figue.js
   templates:
     - dynamic/jst/**/*
   app:

@@ -64,32 +64,62 @@ GM.createMap = function (lat, lon, zoomlevel, id) {
   return new google.maps.Map(el, opts);
 };
 
+GM.mapClusterer = {
+  makeCluster: function (markers) {
+    
+  },
+
+  createClusterLayer: function (map, markers) {
+    var clusters  = [];
+    var vectors = [];
+    var labels = [];
+    _.each(markers, function (item) {
+      vectors.push([item.pos.lat(), item.pos.lng()]);
+      labels.push(item.id);
+    });
+    var root = figue.kmeans(10, vectors);
+    var id = 0;
+    for (var i = 0, ii = root.centroids.length; i < ii; i++) {
+      var item = root.centroids[i];
+      clusters.push(new GM.ThinMarker(id++, new google.maps.LatLng(item[0], item[1]), null, 'cluster'));
+    }
+
+    return new GM.MarkerOverlay(map, clusters);
+  }
+};
+
 GM.mapController = {
   map: null,
   activeBoundaryPoints: null,
   activeBoundaryPolygon: null,
-  overlay: null,
+  objectOverlay: null,
+  clusterOverlay: null,
 
+  /****** Initialization ******/
   init: function (map) {
     this.map = map;
+    this.initHelper();
+    return this;
+  },
+
+  initHelper: function () {
     this._helper = new google.maps.OverlayView();
     this._helper.draw = $.noop;
     this._helper.onAdd = $.noop;
     this._helper.onRemove = $.noop;
-    this._helper.setMap(map);
-    return this;
+    this._helper.setMap(this.map);
   },
 
+
+  /****** Helpers ******/
   fromLatLngToDivPixel: function (p) {
     return this._helper.getProjection().fromLatLngToDivPixel(p);
   },
 
+  /****** Marker operations ******/
   setMarkers: function (markers) {
-    this.overlay = new GM.MarkerOverlay(this.map, markers);
-  },
-
-  setBounds: function (boundary) {
-    this.activeBoundaryPoints = boundary == null ? null : boundary.polygon;
+    this.objectOverlay = new GM.MarkerOverlay(this.map, markers);
+    this.clusterOverlay = new GM.mapClusterer.createClusterLayer(this.map, markers);
   },
 
   moveMarkers: function (markers) {
@@ -103,6 +133,11 @@ GM.mapController = {
       }
     }
 
+  },
+
+  /****** Boundary mask operations  ******/
+  setBounds: function (boundary) {
+    this.activeBoundaryPoints = boundary == null ? null : boundary.polygon;
   },
 
   drawBounds: function () {
