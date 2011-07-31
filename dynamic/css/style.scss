@@ -1,0 +1,28 @@
+html { height: 100% }
+body { height: 100%; margin: 0; padding: 0 }
+#gmap {
+    height: 600px;
+    width: 800px;
+}
+
+div > .clusterMarker {
+    position: absolute;
+    color: #fff;
+    width: 24px;
+    height: 20px;
+    margin-height: -12px;
+    margin-width: -12px;
+    text-align: center;
+    padding-top: 4px;
+    font-size: 8px;
+    background: url(../img/circle.png) no-repeat top left;
+    -webkit-transition: left .4s ease-out .3s, top .4s ease-out .3s;
+    -moz-transition: left .4s ease-out .3s, top .4s ease-out .3s;
+    -o-transition: left .4s ease-out .3s, top .4s ease-out .3s;
+}
+
+div > .clusterMarker:hover {
+    -webkit-transform: scale(1.2);
+    -moz-transform: scale(1.2);
+    -o-transform: scale(1.2);
+}

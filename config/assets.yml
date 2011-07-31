@@ -1,0 +1,21 @@
+template_function:      _.template
+
+javascripts:
+  data:
+    - static/js/counties.js
+    - static/js/municipalities.js
+  lib:
+    - static/js/lib/jquery-min.js
+    - static/js/lib/underscore-min.js
+    - static/js/lib/backbone-min.js
+  templates:
+    - dynamic/jst/**/*
+  app:
+    - static/js/application.js
+
+stylesheets:
+  common:
+    - static/css/reset.css
+    - static/css/base.css
+    - dynamic/css/style.scss
+
