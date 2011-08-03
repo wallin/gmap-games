@@ -36,6 +36,26 @@ var vell = {
   }
 };
 
+
+/***** Logging ******/
+
+GM.log = function (msg, lvl) {
+  lvl = lvl || GM.log.INFO;
+  if (lvl >= GM.log.level) {
+    console.log(msg);
+  }
+};
+
+GM.log.INFO  = 0;
+GM.log.WARN  = 1;
+GM.log.ERROR = 2;
+
+GM.log.level = GM.log.INFO;
+
+
+GM.MARKER_CLASS  = 'mapMarker';
+GM.CLUSTER_CLASS = 'clusterMarker';
+
 GM.Boundary = function (name, coordSet) {
   this.name = name;
   var poly = this.polygon = [];
@@ -52,6 +72,27 @@ GM.Boundary = function (name, coordSet) {
   }
 };
 
+
+/****** Geo helpers ******/
+GM.Helpers = {
+  //http://www.movable-type.co.uk/scripts/latlong.html
+  distanceBetweenPoints: function (p1, p2) {
+    if (!p1 || !p2) {
+      return 0;
+    }
+
+    var R = 6371; // Radius of the Earth in km
+    var dLat = (p2.lat() - p1.lat()) * Math.PI / 180;
+    var dLon = (p2.lng() - p1.lng()) * Math.PI / 180;
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(p1.lat() * Math.PI / 180) * Math.cos(p2.lat() * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    var d = R * c;
+    return d;
+  }
+};
+
 GM.createMap = function (lat, lon, zoomlevel, id) {
   var opts = {
     center: new google.maps.LatLng(lat, lon),
@@ -64,33 +105,209 @@ GM.createMap = function (lat, lon, zoomlevel, id) {
   return new google.maps.Map(el, opts);
 };
 
-GM.mapClusterer = {
-  createClusterLayer: function (map, markers) {
-    var clusters  = [];
-    var vectors = [];
-    var labels = [];
-    _.each(markers, function (item) {
-      vectors.push([item.pos.lat(), item.pos.lng()]);
-      labels.push(item.id);
-    });
-    var root = figue.kmeans(10, vectors);
-    var id = 0;
-    for (var i = 0, ii = root.centroids.length; i < ii; i++) {
-      var item = root.centroids[i];
-      clusters.push(new GM.ThinMarker(id++, new google.maps.LatLng(item[0], item[1]), null, 'cluster'));
-    }
 
-    _.each(markers, function (item, i) {
-      var pos = root.centroids[root.assignments[i]];
-      item.realPos = item.pos;
-      item.pos = new google.maps.LatLng(pos[0], pos[1]);
-    });
 
-    GM.mapController.moveMarkers(markers);
 
-    return new GM.MarkerOverlay(map, clusters);
-  }
+
+// Clusterer will create a new overlay for displaying it's items
+// It is constructed with a google map instance as parameter
+GM.mapClusterer = function (controller) {
+  this.map = controller;
+  this.clusters = [];
+  this.clusterLookup = {}; // Find out which cluster a marker belongs to
+  this.markers = null;
+  this.overlay = null;
+  this.gridSize = 120;
 };
+
+GM.mapClusterer.prototype.moveMarkersToClusters = function (markers, clusters, lookup) {
+  for (var i = 0, ii = markers.length; i < ii; i++) {
+    var m = markers[i];
+    var c = clusters[lookup[m.id]];
+    if (c) {
+      m.realPos = m.pos;
+      m.pos = new google.maps.LatLng(c.pos.lat(), c.pos.lng());
+    }
+  }
+  this.map.moveMarkers(markers);
+};
+
+// https://engineering.purdue.edu/~milind/docs/rt08.pdf
+// http://nlp.stanford.edu/IR-book/html/htmledition/hierarchical-agglomerative-clustering-1.html
+// http://nlp.stanford.edu/IR-book/html/htmledition/cluster-cardinality-in-k-means-1.html#eqn:aicsimple
+GM.mapClusterer.prototype.createKMeansClusters = function (markers) {
+  var clusters  = [];
+  var vectors = [];
+  var labels = [];
+  _.each(markers, function (item) {
+    vectors.push([item.pos.lat(), item.pos.lng()]);
+    labels.push(item.id);
+  });
+  var t1 = new Date();
+  var root = this.clusterData = figue.kmeans(10, vectors);
+  GM.log('K-means complete after: ' + (new Date() - t1));
+  t1 = new Date();
+  console.log(figue.agglomerate(labels, vectors, figue.EUCLIDIAN_DISTANCE, figue.SINGLE_LINKAGE));
+  GM.log('Agglo complete after: ' + (new Date() - t1));
+  GM.log(root);
+  var id = 0;
+  for (var i = 0, ii = root.centroids.length; i < ii; i++) {
+    var item = root.centroids[i];
+    clusters.push(
+      new GM.ThinMarker(
+        'cluster_' + (id++),
+        new google.maps.LatLng(item[0], item[1]),
+        null,
+        GM.CLUSTER_CLASS
+      )
+    );
+  }
+  this.markers = markers;
+  this.clusters = clusters;
+};
+
+// Create bounds extended to grid size
+GM.mapClusterer.prototype.getExtendedBounds = function (bounds) {
+  var projection = this.map.getProjection();
+
+  // Turn the bounds into latlng.
+  var tr = new google.maps.LatLng(bounds.getNorthEast().lat(),
+      bounds.getNorthEast().lng());
+  var bl = new google.maps.LatLng(bounds.getSouthWest().lat(),
+      bounds.getSouthWest().lng());
+
+  // Convert the points to pixels and the extend out by the grid size.
+  var trPix = projection.fromLatLngToDivPixel(tr);
+  trPix.x += this.gridSize;
+  trPix.y -= this.gridSize;
+
+  var blPix = projection.fromLatLngToDivPixel(bl);
+  blPix.x -= this.gridSize;
+  blPix.y += this.gridSize;
+
+  // Convert the pixel points back to LatLng
+  var ne = projection.fromDivPixelToLatLng(trPix);
+  var sw = projection.fromDivPixelToLatLng(blPix);
+
+  // Extend the bounds to contain the new bounds.
+  bounds.extend(ne);
+  bounds.extend(sw);
+
+  return bounds;
+};
+
+GM.mapClusterer.prototype.addToClosestCluster = function (clusters, lookup, marker, force) {
+  var distance = Infinity;
+  var clusterToAddTo = null;
+  var idx = 0;
+  for (var i = 0, cluster; cluster = clusters[i]; i++) {
+    var center = cluster.pos;
+    if (center) {
+      var d = GM.Helpers.distanceBetweenPoints(center, marker.pos);
+      if (d < distance) {
+        distance = d;
+        idx = i;
+        clusterToAddTo = cluster;
+      }
+    }
+  }
+
+  if (force || (clusterToAddTo && clusterToAddTo.isMarkerInClusterBounds(marker))) {
+    clusterToAddTo.addMarker(marker);
+  } else {
+    idx = clusters.length;
+    cluster = new GM.ThinCluster(this, idx, null, null, GM.CLUSTER_CLASS);
+    cluster.addMarker(marker);
+    clusters.push(cluster);
+  }
+  lookup[marker.id] = idx;
+};
+
+GM.mapClusterer.prototype.createClusters = function (markers, clusters) {
+  var forceExisting = clusters != null;
+  clusters = clusters || [];
+  var lookup = {};
+
+  var mapBounds = new google.maps.LatLngBounds(this.map.map.getBounds().getSouthWest(),
+                                               this.map.map.getBounds().getNorthEast());
+  var bounds = this.getExtendedBounds(mapBounds);
+
+  var t1 = new Date();
+
+  for (var i = 0, marker; marker = markers[i]; i++) {
+    if (!marker.isAdded && bounds.contains(marker.pos)) {
+      this.addToClosestCluster(clusters, lookup, marker, forceExisting);
+    }
+  }
+
+  GM.log('Created ' + clusters.length + ' clusters from ' + markers.length + ' markers in ' + (new Date() - t1) + 'ms');
+
+  return { clusters: clusters, lookup: lookup };
+};
+
+GM.mapClusterer.prototype.updateClusters = function (markers) {
+  this.markers = markers;
+  var oldClusters = this.clusters;
+  // Calculate new cluster positions
+  var rv = this.createClusters(markers);
+  this.clusters = rv.clusters;
+  this.clusterLookup = rv.lookup;
+
+  if (this.overlay) {
+    var overlay = this.overlay;
+    _.defer(function () {
+      overlay.setMap(null);
+    });
+  }
+  this.overlay = new GM.MarkerOverlay(this.map.map, this.clusters);
+
+};
+
+GM.mapClusterer.prototype.createLayer = function (markers) {
+  var rv = this.createClusters(markers);
+  var self = this;
+  this.markers = markers;
+  this.clusters = rv.clusters;
+  this.clusterLookup = rv.lookup;
+
+  _.defer(function () {
+    self.moveMarkersToClusters(markers, rv.clusters, rv.lookup);
+  });
+
+  this.overlay = new GM.MarkerOverlay(this.map.map, rv.clusters);
+  return this.overlay;
+};
+
+// Remove cluster overlay and create a new markerlayer based on current clusters
+GM.mapClusterer.prototype.removeLayer = function () {
+  var markers = [];
+  for (var i = 0, ii = this.clusters.length; i < ii; i++) {
+    var c = this.clusters[i];
+    for (var j = 0, jj = c.markers.length; j < jj; j++) {
+      var m = c.markers[j];
+      markers.push(m);
+      m.realPos = m.realPos || m.pos;
+      m.pos = c.pos;
+      m.isAdded = false;
+    }
+  }
+  var layer = new GM.MarkerOverlay(this.map.map, markers);
+  var self = this;
+  _.defer(function () {
+    self.map.moveMarkers(self.markers, true);
+  });
+  if (this.overlay) {
+    this.overlay.setMap(null);
+    this.overlay = null;
+  }
+  this.clusters = [];
+  this.clusterLookup = null;
+
+  return layer;
+};
+
+
+/******************************************************************************/
 
 GM.mapController = {
   map: null,
@@ -99,11 +316,24 @@ GM.mapController = {
   activeBoundaryPolygon: null,
   objectOverlay: null,
   clusterOverlay: null,
+  zoomLevel: null,
+  zoomDiff: null,
+
+  _isMoving: false,
 
   /****** Initialization ******/
-  init: function (map) {
+  init: function (map, data, el) {
+    _.bindAll(this, 'onDragStart', 'onClick', 'onIdle', 'onBoundsChanged', 'onZoomEnd');
     this.map = map;
+    this.data = data;
     this.initHelper();
+    this.clusterer = new GM.mapClusterer(this);
+    // Setup event handlers
+    google.maps.event.addListener(this.map, 'dragstart', this.onDragStart);
+    google.maps.event.addListener(this.map, 'bounds_changed', this.onBoundsChanged);
+    google.maps.event.addListener(this.map, 'idle', this.onIdle);
+    google.maps.event.addListener(this.map, 'zoom_changed', this.onZoomEnd);
+    google.maps.event.addDomListener(document.getElementById(el), 'click', this.onClick);
     return this;
   },
 
@@ -115,23 +345,97 @@ GM.mapController = {
     this._helper.setMap(this.map);
   },
 
+  /****** Map event handlers *******/
+  onDragStart: function () {
+    GM.log('begin map move');
+    this._isMoving = true;
+  },
+
+  onZoomEnd: function (z1, z2) {
+    GM.log('Map zoomed in from ' + z1 + ' to ' + z2);
+  },
+
+  onIdle: function () {
+    GM.log('map idle');
+    this.zoomDiff = this.map.getZoom() - this.zoomLevel;
+    this.zoomLevel = this.map.getZoom();
+    if (this._isMoving) {
+      this.redraw();
+      this._isMoving = false;
+    }
+  },
+
+  onClick: function (e) {
+    // Check if we hit a marker
+    if (!this._isMoving && e && e.target && e.target.className) {
+      switch (e.target.className) {
+      case GM.CLUSTER_CLASS:
+        GM.log('Cluster clicked');
+        break;
+      case GM.MARKER_CLASS:
+        GM.log('Marker clicked');
+        break;
+      }
+      GM.log(e);
+    }
+  },
+
+  onBoundsChanged: function () {
+    this._isMoving = true;
+  },
 
   /****** Helpers ******/
+  getProjection: function () {
+    return this._helper.getProjection();
+  },
+
   fromLatLngToDivPixel: function (p) {
     return this._helper.getProjection().fromLatLngToDivPixel(p);
   },
 
-  /****** Marker operations ******/
-  setMarkers: function (markers) {
-    this.markers = markers;
-    this.objectOverlay = new GM.MarkerOverlay(this.map, this.markers);
+  /****** Map operations ******/
+  redraw: function () {
+    GM.log('redraw map');
+    var bounds = this.map.getBounds();
+    var ne = bounds.getNorthEast();
+    var sw = bounds.getSouthWest();
+    this.markers = this.data.requestBB(sw.lat(), sw.lng(), ne.lat(), ne.lng());
+    if (this.clusterOverlay) {
+      this.updateClusterLayer();
+    }
+    else {
+      this.updateMarkers();
+    }
   },
 
-  moveMarkers: function (markers) {
+
+  zoomToBounds: function (bounds) {
+    this.map.fitBounds(bounds);
+  },
+
+  /****** Marker operations ******/
+  updateMarkers: function (markers) {
+    var newOverlay = new GM.MarkerOverlay(this.map, this.markers);
+    if (this.objectOverlay) {
+      var overlay = this.objectOverlay;
+      _.defer(function () {
+        overlay.setMap(null);
+      });
+    }
+    this.objectOverlay = newOverlay;
+
+  },
+
+  moveMarkers: function (markers, reverse) {
     for (var i = 0, ii = markers.length; i < ii; i++) {
       var mrk = markers[i];
       var currentMarker = document.getElementById(mrk.id);
       if (currentMarker) {
+        if (reverse) {
+          var s = mrk.pos;
+          mrk.pos = mrk.realPos;
+          mrk.realPos = s;
+        }
         var pos = this.fromLatLngToDivPixel(mrk.pos);
         currentMarker.style.left = pos.x + 'px';
         currentMarker.style.top = pos.y + 'px';
@@ -140,29 +444,35 @@ GM.mapController = {
 
   },
 
-
   /****** Cluster operations ******/
   toggleClusterLayer: function () {
     if (this.clusterOverlay) {
-      this.removeClusterLayer();
+      if (this.objectOverlay) {
+        this.objectOverlay.setMap(null);
+      }
+      this.objectOverlay = this.removeClusterLayer();
     }
     else {
       this.addClusterLayer();
     }
   },
   addClusterLayer: function () {
-    this.clusterOverlay = new GM.mapClusterer.createClusterLayer(this.map, this.markers);
+    this.clusterOverlay = this.clusterer.createLayer(this.markers);
+    var self = this;
+    _.delay(function () {
+      if (self.objectOverlay) {
+        self.objectOverlay.setMap(null);
+      }
+    }, 700);
+  },
+
+  updateClusterLayer: function () {
+    this.clusterer.updateClusters(this.markers);
   },
 
   removeClusterLayer: function () {
-    _.each(this.markers, function (item) {
-      if (item.realPos) {
-        item.pos = item.realPos;
-      }
-    });
-    this.moveMarkers(this.markers);
-    this.clusterOverlay.setMap(null);
     this.clusterOverlay = null;
+    return this.clusterer.removeLayer();
   },
 
   /****** Boundary mask operations  ******/
@@ -211,34 +521,41 @@ GM.mapController = {
 };
 
 
+GM.DataController = Backbone.Collection.extend({
+  initialize: function () {
+    _.bindAll(this, 'requestBB');
+  },
+  requestBB: function (sw_lat, sw_lon, ne_lat, ne_lon) {
+    var markers = [];
+    this.each(function (item, i) {
+      item = item.attributes;
+      if (item.lat > sw_lat && item.lat < ne_lat &&
+          item.lon > sw_lon && item.lon < ne_lon) {
+        markers.push(new GM.ThinMarker(
+          'item_' + i,
+          new google.maps.LatLng(item.lat, item.lon),
+          null,
+          GM.MARKER_CLASS
+        ));
+      }
+    });
+    return markers;
+  }
+});
+
 /******************************************************************************/
 
 $(function () {
   var map = GM.createMap(61.588047, 14.000946, 5, 'gmap');
-  var c = GM.mapController.init(map);
+  var data = new GM.DataController();
+  var c = GM.mapController.init(map, data, 'gmap');
+  data.reset(munis);
+
 
   var mlm = new GM.Boundary('Malmö', [ malmo.geometry.coordinates, storp.geometry.coordinates]);
   c.setBounds(mlm);
   c.drawBounds();
 
-  var markers = [];
-  var id = 0;
-  _.each(munis, function (o) {
-    markers.push(new GM.ThinMarker(
-      'home_' + (id++),
-      new google.maps.LatLng(o.lat, o.lon),
-      null,
-      'clusterMarker'
-    ));
-  });
-
-  c.setMarkers(markers);
-
-  function movePos(pos) {
-    var lat = pos.lat() + ((Math.random() * 2) - 1) / 10;
-    var lon = pos.lng() + ((Math.random() * 2) - 1) / 10;
-    return new google.maps.LatLng(lat, lon);
-  }
 
   $('#animate').click(function () {
     c.toggleClusterLayer();
@@ -263,7 +580,7 @@ _.extend(GM.MarkerOverlay.prototype, {
   onAdd: function () {
     this.el = document.createElement('div');
     var panes = this.getPanes();
-    panes.overlayMouseTarget.appendChild(this.el);
+    panes.floatPane.appendChild(this.el);
   },
 
 
@@ -290,7 +607,7 @@ _.extend(GM.MarkerOverlay.prototype, {
         HTML += pos.x;
         HTML += 'px; top:';
         HTML += pos.y;
-        HTML += 'px; z-index: 10000;"';
+        HTML += 'px;"';
         HTML += ' class="' + marker.className + '"';
         HTML += '>';
         if (marker.text) {
@@ -327,3 +644,43 @@ _.extend(GM.ThinMarker.prototype, {
     this.visible = a === null ? false : true;
   }
 });
+
+/****** Cluster type *******/
+
+GM.ThinCluster = function (clusterer, id, pos, text, className) {
+  this.id = id;
+  this.text = text;
+  this.className = className;
+  this.markers = [];
+  this.pos = null;
+  this.clusterer = clusterer;
+  this.bounds = null;
+  this.visible = true;
+};
+
+
+GM.ThinCluster.prototype.calculateBounds = function () {
+  var bounds = new google.maps.LatLngBounds(this.pos, this.pos);
+  this.bounds = this.clusterer.getExtendedBounds(bounds);
+};
+
+GM.ThinCluster.prototype.addMarker = function (marker) {
+  if (!this.pos) {
+    this.pos = marker.pos;
+    this.calculateBounds();
+  }
+
+  // Calculate Average center
+  var l = this.markers.length + 1;
+  var lat = (this.pos.lat() * (l - 1) + marker.pos.lat()) / l;
+  var lng = (this.pos.lng() * (l - 1) + marker.pos.lng()) / l;
+  this.pos = new google.maps.LatLng(lat, lng);
+  this.calculateBounds();
+
+  marker.isAdded = true;
+  this.markers.push(marker);
+};
+
+GM.ThinCluster.prototype.isMarkerInClusterBounds = function (marker) {
+  return this.bounds.contains(marker.pos);
+};

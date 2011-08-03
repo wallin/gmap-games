@@ -5,8 +5,9 @@ body { height: 100%; margin: 0; padding: 0 }
     width: 800px;
 }
 
-div > .cluster,
+div > .mapMarker,
 div > .clusterMarker {
+    z-index: 1000;
     position: absolute;
     color: #fff;
     width: 24px;
@@ -16,12 +17,13 @@ div > .clusterMarker {
     text-align: center;
     padding-top: 4px;
     font-size: 8px;
-    background: url(../img/circle.png) no-repeat top left;
+    background: url(../img/circle2.png) no-repeat top left;
     -webkit-transition: left .4s ease-out .3s, top .4s ease-out .3s;
     -moz-transition: left .4s ease-out .3s, top .4s ease-out .3s;
     -o-transition: left .4s ease-out .3s, top .4s ease-out .3s;
 }
 
+div > .mapMarker:hover,
 div > .clusterMarker:hover {
     -webkit-transform: scale(1.2);
     -moz-transform: scale(1.2);
@@ -29,6 +31,7 @@ div > .clusterMarker:hover {
 }
 
 
-div > .cluster {
-    background: url(../img/circle2.png) no-repeat top left;
+div > .mapMarker {
+    background: url(../img/circle.png) no-repeat top left;
+    z-index: 100;
 }
