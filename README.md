@@ -1,5 +1,6 @@
 Playing with google maps (using frank).
 
 * Polygons with holes.
-* fast marker strategies
-* animations
+* Fast marker strategies
+* CSS3 animations
+* Convex hull
