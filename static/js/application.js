@@ -55,6 +55,7 @@ GM.log.level = GM.log.INFO;
 
 GM.MARKER_CLASS  = 'mapMarker';
 GM.CLUSTER_CLASS = 'clusterMarker';
+GM.ANIMATION_TIME = 700;
 
 GM.Boundary = function (name, coordSet) {
   this.name = name;
@@ -106,68 +107,41 @@ GM.createMap = function (lat, lon, zoomlevel, id) {
 };
 
 
+/******************************************************************************/
 
+GM.Clusterer = {};
 
-
-// Clusterer will create a new overlay for displaying it's items
-// It is constructed with a google map instance as parameter
-GM.mapClusterer = function (controller) {
-  this.map = controller;
-  this.clusters = [];
-  this.clusterLookup = {}; // Find out which cluster a marker belongs to
-  this.markers = null;
-  this.overlay = null;
-  this.gridSize = 120;
-};
-
-GM.mapClusterer.prototype.moveMarkersToClusters = function (markers, clusters, lookup) {
-  for (var i = 0, ii = markers.length; i < ii; i++) {
-    var m = markers[i];
-    var c = clusters[lookup[m.id]];
-    if (c) {
-      m.realPos = m.pos;
-      m.pos = new google.maps.LatLng(c.pos.lat(), c.pos.lng());
-    }
-  }
-  this.map.moveMarkers(markers);
-};
-
-// https://engineering.purdue.edu/~milind/docs/rt08.pdf
-// http://nlp.stanford.edu/IR-book/html/htmledition/hierarchical-agglomerative-clustering-1.html
-// http://nlp.stanford.edu/IR-book/html/htmledition/cluster-cardinality-in-k-means-1.html#eqn:aicsimple
-GM.mapClusterer.prototype.createKMeansClusters = function (markers) {
-  var clusters  = [];
-  var vectors = [];
-  var labels = [];
-  _.each(markers, function (item) {
-    vectors.push([item.pos.lat(), item.pos.lng()]);
-    labels.push(item.id);
-  });
-  var t1 = new Date();
-  var root = this.clusterData = figue.kmeans(10, vectors);
-  GM.log('K-means complete after: ' + (new Date() - t1));
-  t1 = new Date();
-  console.log(figue.agglomerate(labels, vectors, figue.EUCLIDIAN_DISTANCE, figue.SINGLE_LINKAGE));
-  GM.log('Agglo complete after: ' + (new Date() - t1));
-  GM.log(root);
-  var id = 0;
-  for (var i = 0, ii = root.centroids.length; i < ii; i++) {
-    var item = root.centroids[i];
-    clusters.push(
-      new GM.ThinMarker(
-        'cluster_' + (id++),
-        new google.maps.LatLng(item[0], item[1]),
-        null,
-        GM.CLUSTER_CLASS
-      )
-    );
-  }
+/** Google marker manager */
+GM.Clusterer.Google = function (map, markers, clusters) {
+  this.map = map;
   this.markers = markers;
   this.clusters = clusters;
+  this.lookup = {};
+  this.gridSize = 120;
+  this.createClusters();
+};
+GM.Clusterer.Google.prototype.createClusters = function () {
+  var forceExisting = this.clusters != null;
+  this.clusters = this.clusters || [];
+  this.lookup = {};
+
+  var mapBounds = new google.maps.LatLngBounds(this.map.map.getBounds().getSouthWest(),
+                                               this.map.map.getBounds().getNorthEast());
+  var bounds = this.getExtendedBounds(mapBounds);
+
+  var t1 = new Date();
+
+  for (var i = 0, marker; marker = this.markers[i]; i++) {
+    if (!marker.isAdded && bounds.contains(marker.pos)) {
+      this.addToClosestCluster(marker, forceExisting);
+    }
+  }
+
+  GM.log('Created ' + this.clusters.length + ' clusters from ' + this.markers.length + ' markers in ' + (new Date() - t1) + 'ms');
 };
 
 // Create bounds extended to grid size
-GM.mapClusterer.prototype.getExtendedBounds = function (bounds) {
+GM.Clusterer.Google.prototype.getExtendedBounds = function (bounds) {
   var projection = this.map.getProjection();
 
   // Turn the bounds into latlng.
@@ -196,11 +170,12 @@ GM.mapClusterer.prototype.getExtendedBounds = function (bounds) {
   return bounds;
 };
 
-GM.mapClusterer.prototype.addToClosestCluster = function (clusters, lookup, marker, force) {
+
+GM.Clusterer.Google.prototype.addToClosestCluster = function (marker, force) {
   var distance = Infinity;
   var clusterToAddTo = null;
   var idx = 0;
-  for (var i = 0, cluster; cluster = clusters[i]; i++) {
+  for (var i = 0, cluster; cluster = this.clusters[i]; i++) {
     var center = cluster.pos;
     if (center) {
       var d = GM.Helpers.distanceBetweenPoints(center, marker.pos);
@@ -215,41 +190,78 @@ GM.mapClusterer.prototype.addToClosestCluster = function (clusters, lookup, mark
   if (force || (clusterToAddTo && clusterToAddTo.isMarkerInClusterBounds(marker))) {
     clusterToAddTo.addMarker(marker);
   } else {
-    idx = clusters.length;
+    idx = this.clusters.length;
     cluster = new GM.ThinCluster(this, idx, null, null, GM.CLUSTER_CLASS);
     cluster.addMarker(marker);
-    clusters.push(cluster);
+    this.clusters.push(cluster);
   }
-  lookup[marker.id] = idx;
+  this.lookup[marker.id] = idx;
 };
 
-GM.mapClusterer.prototype.createClusters = function (markers, clusters) {
-  var forceExisting = clusters != null;
-  clusters = clusters || [];
-  var lookup = {};
-
-  var mapBounds = new google.maps.LatLngBounds(this.map.map.getBounds().getSouthWest(),
-                                               this.map.map.getBounds().getNorthEast());
-  var bounds = this.getExtendedBounds(mapBounds);
-
+/** Simple K-means */
+// https://engineering.purdue.edu/~milind/docs/rt08.pdf
+// http://nlp.stanford.edu/IR-book/html/htmledition/hierarchical-agglomerative-clustering-1.html
+// http://nlp.stanford.edu/IR-book/html/htmledition/cluster-cardinality-in-k-means-1.html#eqn:aicsimple
+GM.Clusterer.KMeans = function (markers) {
+  var clusters  = [];
+  var vectors = [];
+  var labels = [];
+  _.each(markers, function (item) {
+    vectors.push([item.pos.lat(), item.pos.lng()]);
+    labels.push(item.id);
+  });
   var t1 = new Date();
+  var root = this.clusterData = figue.kmeans(10, vectors);
+  GM.log('K-means complete after: ' + (new Date() - t1));
+  t1 = new Date();
+  var id = 0;
+  for (var i = 0, ii = root.centroids.length; i < ii; i++) {
+    var item = root.centroids[i];
+    clusters.push(
+      new GM.ThinMarker(
+        'cluster_' + (id++),
+        new google.maps.LatLng(item[0], item[1]),
+        null,
+        GM.CLUSTER_CLASS
+      )
+    );
+  }
+  this.markers = markers;
+  this.clusters = clusters;
+  this.lookup = root.assignments;
+};
 
-  for (var i = 0, marker; marker = markers[i]; i++) {
-    if (!marker.isAdded && bounds.contains(marker.pos)) {
-      this.addToClosestCluster(clusters, lookup, marker, forceExisting);
+
+/******************************************************************************/
+
+// Clusterer will create a new overlay for displaying it's items
+// It is constructed with a google map instance as parameter
+GM.mapClusterer = function (controller) {
+  this.map = controller;
+  this.clusters = [];
+  this.clusterLookup = {}; // Find out which cluster a marker belongs to
+  this.markers = null;
+  this.overlay = null;
+};
+
+GM.mapClusterer.prototype.moveMarkersToClusters = function (markers, clusters, lookup) {
+  for (var i = 0, ii = markers.length; i < ii; i++) {
+    var m = markers[i];
+    var c = clusters[lookup[m.id]];
+    if (c) {
+      m.realPos = m.pos;
+      m.pos = new google.maps.LatLng(c.pos.lat(), c.pos.lng());
     }
   }
-
-  GM.log('Created ' + clusters.length + ' clusters from ' + markers.length + ' markers in ' + (new Date() - t1) + 'ms');
-
-  return { clusters: clusters, lookup: lookup };
+  this.map.moveMarkers(markers);
 };
+
 
 GM.mapClusterer.prototype.updateClusters = function (markers) {
   this.markers = markers;
   var oldClusters = this.clusters;
   // Calculate new cluster positions
-  var rv = this.createClusters(markers);
+  var rv = new GM.Clusterer.Google(this.map, markers);
   this.clusters = rv.clusters;
   this.clusterLookup = rv.lookup;
 
@@ -260,11 +272,10 @@ GM.mapClusterer.prototype.updateClusters = function (markers) {
     });
   }
   this.overlay = new GM.MarkerOverlay(this.map.map, this.clusters);
-
 };
 
 GM.mapClusterer.prototype.createLayer = function (markers) {
-  var rv = this.createClusters(markers);
+  var rv = new GM.Clusterer.Google(this.map, markers);
   var self = this;
   this.markers = markers;
   this.clusters = rv.clusters;
@@ -280,6 +291,7 @@ GM.mapClusterer.prototype.createLayer = function (markers) {
 
 // Remove cluster overlay and create a new markerlayer based on current clusters
 GM.mapClusterer.prototype.removeLayer = function () {
+  var self = this;
   var markers = [];
   for (var i = 0, ii = this.clusters.length; i < ii; i++) {
     var c = this.clusters[i];
@@ -292,14 +304,15 @@ GM.mapClusterer.prototype.removeLayer = function () {
     }
   }
   var layer = new GM.MarkerOverlay(this.map.map, markers);
-  var self = this;
   _.defer(function () {
     self.map.moveMarkers(self.markers, true);
   });
-  if (this.overlay) {
-    this.overlay.setMap(null);
-    this.overlay = null;
-  }
+  _.delay(function () {
+    if (self.overlay) {
+      self.overlay.setMap(null);
+      self.overlay = null;
+    }
+  }, GM.ANIMATION_TIME);
   this.clusters = [];
   this.clusterLookup = null;
 
@@ -406,6 +419,11 @@ GM.mapController = {
     else {
       this.updateMarkers();
     }
+    // Enable clustering if not already enabled
+    if ((this.markers.length > 100 && !this.clusterOverlay) ||
+        (this.markers.length <= 100 && this.clusterOverlay)) {
+      this.toggleClusterLayer();
+    }
   },
 
 
@@ -463,7 +481,7 @@ GM.mapController = {
       if (self.objectOverlay) {
         self.objectOverlay.setMap(null);
       }
-    }, 700);
+    }, GM.ANIMATION_TIME);
   },
 
   updateClusterLayer: function () {
@@ -552,9 +570,9 @@ $(function () {
   data.reset(munis);
 
 
-  var mlm = new GM.Boundary('Malmö', [ malmo.geometry.coordinates, storp.geometry.coordinates]);
-  c.setBounds(mlm);
-  c.drawBounds();
+//   var mlm = new GM.Boundary('Malmö', [ malmo.geometry.coordinates, storp.geometry.coordinates]);
+//   c.setBounds(mlm);
+//   c.drawBounds();
 
 
   $('#animate').click(function () {
