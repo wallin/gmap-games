@@ -11,6 +11,7 @@ javascripts:
   templates:
     - dynamic/jst/**/*
   app:
+    - static/js/gm.helpers.js
     - static/js/application.js
 
 stylesheets:

@@ -73,27 +73,6 @@ GM.Boundary = function (name, coordSet) {
   }
 };
 
-
-/****** Geo helpers ******/
-GM.Helpers = {
-  //http://www.movable-type.co.uk/scripts/latlong.html
-  distanceBetweenPoints: function (p1, p2) {
-    if (!p1 || !p2) {
-      return 0;
-    }
-
-    var R = 6371; // Radius of the Earth in km
-    var dLat = (p2.lat() - p1.lat()) * Math.PI / 180;
-    var dLon = (p2.lng() - p1.lng()) * Math.PI / 180;
-    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(p1.lat() * Math.PI / 180) * Math.cos(p2.lat() * Math.PI / 180) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    var d = R * c;
-    return d;
-  }
-};
-
 GM.createMap = function (lat, lon, zoomlevel, id) {
   var opts = {
     center: new google.maps.LatLng(lat, lon),
@@ -271,6 +250,16 @@ GM.mapClusterer.prototype.updateClusters = function (markers) {
       overlay.setMap(null);
     });
   }
+
+  if (this.poly) {
+    this.poly.setMap(null);
+  }
+  this.poly = new google.maps.Polygon({
+    paths: GM.Helpers.convexHull(this.markers),
+    map: this.map.map
+  });
+
+
   this.overlay = new GM.MarkerOverlay(this.map.map, this.clusters);
 };
 
@@ -280,6 +269,11 @@ GM.mapClusterer.prototype.createLayer = function (markers) {
   this.markers = markers;
   this.clusters = rv.clusters;
   this.clusterLookup = rv.lookup;
+
+  this.poly = new google.maps.Polygon({
+    paths: GM.Helpers.convexHull(this.markers),
+    map: this.map.map
+  });
 
   _.defer(function () {
     self.moveMarkersToClusters(markers, rv.clusters, rv.lookup);
@@ -315,6 +309,10 @@ GM.mapClusterer.prototype.removeLayer = function () {
   }, GM.ANIMATION_TIME);
   this.clusters = [];
   this.clusterLookup = null;
+
+  if (this.poly) {
+    this.poly.setMap(null);
+  }
 
   return layer;
 };
