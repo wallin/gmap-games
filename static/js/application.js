@@ -190,14 +190,14 @@ GM.Clusterer.KMeans = function (markers) {
     labels.push(item.id);
   });
   var t1 = new Date();
-  var root = this.clusterData = figue.kmeans(10, vectors);
+  var root = figue.kmeans(10, vectors);
   GM.log('K-means complete after: ' + (new Date() - t1));
   t1 = new Date();
   var id = 0;
   for (var i = 0, ii = root.centroids.length; i < ii; i++) {
     var item = root.centroids[i];
     clusters.push(
-      new GM.ThinMarker(
+      new GM.ThinCluster(
         'cluster_' + (id++),
         new google.maps.LatLng(item[0], item[1]),
         null,
@@ -237,12 +237,11 @@ GM.mapClusterer.prototype.moveMarkersToClusters = function (markers, clusters, l
 
 
 GM.mapClusterer.prototype.updateClusters = function (markers) {
-  this.markers = markers;
-  var oldClusters = this.clusters;
   // Calculate new cluster positions
   var rv = new GM.Clusterer.Google(this.map, markers);
   this.clusters = rv.clusters;
   this.clusterLookup = rv.lookup;
+  this.markers = markers;
 
   if (this.overlay) {
     var overlay = this.overlay;
@@ -258,7 +257,6 @@ GM.mapClusterer.prototype.updateClusters = function (markers) {
     paths: GM.Helpers.convexHull(this.markers),
     map: this.map.map
   });
-
 
   this.overlay = new GM.MarkerOverlay(this.map.map, this.clusters);
 };
