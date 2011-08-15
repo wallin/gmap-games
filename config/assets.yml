@@ -12,6 +12,7 @@ javascripts:
     - dynamic/jst/**/*
   app:
     - static/js/gm.helpers.js
+    - static/js/gm.clusterer.js
     - static/js/application.js
 
 stylesheets:
