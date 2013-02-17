@@ -171,9 +171,9 @@ GM.mapClusterer.prototype.removeLayer = function () {
     }
   }
   var layer = new GM.MarkerOverlay(this.map.map, markers);
-  _.defer(function () {
+  _.delay(function () {
     self.map.moveMarkers(self.markers, true);
-  });
+  }, 50);
   _.delay(function () {
     if (self.overlay) {
       self.overlay.setMap(null);

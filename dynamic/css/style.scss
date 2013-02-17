@@ -18,7 +18,7 @@ div > .clusterMarker {
     padding-top: 4px;
     font-size: 8px;
     background: url(../img/circle2.png) no-repeat top left;
-    -webkit-transition: left .4s ease-out .3s, top .4s ease-out .3s;
+    -webkit-transition: left .4s ease-out .3s, top .4s ease-out .3s, opacity .5s ease;
     -moz-transition: left .4s ease-out .3s, top .4s ease-out .3s;
     -o-transition: left .4s ease-out .3s, top .4s ease-out .3s;
 }

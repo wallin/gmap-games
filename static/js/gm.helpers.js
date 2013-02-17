@@ -52,58 +52,49 @@ GM.Helpers.makeSimplePolyline = function (points) {
   });
 };
 
+GM.Helpers.leftMostIndex = function(points) {
+  var i, idx, lat, lng, min, p, _i, _len;
+  min = Infinity;
+  idx = 0;
+  for (i = _i = 0, _len = points.length; _i < _len; i = ++_i) {
+    p = points[i];
+    lat = p.pos.lat();
+    lng = p.pos.lng();
+    if (lat < min || (lat === min && lng < points[idx].pos.lng())) {
+      min = lat;
+      idx = i;
+    }
+  }
+  return idx;
+};
 
-// Melkmans O(n)
-//http://softsurfer.com/Archive/algorithm_0203/algorithm_0203.htm
 GM.Helpers.convexHullIsLeft = function (p0, p1, p2) {
-  return (p1.pos.lat() - p0.pos.lat()) * (p2.pos.lng() - p0.pos.lng()) - (p2.pos.lat() - p0.pos.lat()) * (p1.pos.lng() - p0.pos.lng());
+  return (p1.lat() - p0.lat()) * (p2.lng() - p0.lng()) - (p2.lat() - p0.lat()) * (p1.lng() - p0.lng());
 };
 
-GM.Helpers.convexHull = function (points) {
-  var t1 = new Date();
-  var len = points.length;
-  if (len < 3) {
-    return;
-  }
-
-  // First make a valid simple polyline
-  points = GM.Helpers.makeSimplePolyline(points);
-
-  // Then apply Melkmans algorithm
-  var isLeft = GM.Helpers.convexHullIsLeft;
-  var rv = [];
-  var dq = new Array(2 * len + 1);
-  var bot = len - 2, top = bot + 3;
-
-  dq[bot] = dq[top] = points[2];
-  if (isLeft(points[0], points[1], points[2]) > 0) {
-    dq[bot + 1] = points[0];
-    dq[bot + 2] = points[1];
-  }
-  else {
-    dq[bot + 1] = points[1];
-    dq[bot + 2] = points[0];
-  }
-
-  for (var i = 3; i < len; i++) {
-    if ((isLeft(dq[bot], dq[bot + 1], points[i]) > 0) &&
-        (isLeft(dq[top - 1], dq[top], points[i]) > 0)) {
-      continue;
+// Jarvis march gift wrapping algo
+GM.Helpers.convexHull = function(points) {
+    var endPoint, hull, idx, isLeft, p, pointOnHull, _i, _len;
+    if (points.length < 3) {
+      return null;
     }
-    while (isLeft(dq[bot], dq[bot + 1], points[i]) <= 0) {
-      ++bot;
+    idx = GM.Helpers.leftMostIndex(points);
+    isLeft = GM.Helpers.convexHullIsLeft;
+    pointOnHull = points[idx].pos;
+    hull = [];
+    while (true) {
+      hull.push(pointOnHull);
+      endPoint = points[0].pos;
+      for (_i = 0, _len = points.length; _i < _len; _i++) {
+        p = points[_i];
+        if (endPoint.equals(pointOnHull) || isLeft(pointOnHull, endPoint, p.pos) > 0) {
+          endPoint = p.pos;
+        }
+      }
+      pointOnHull = endPoint;
+      if (endPoint.equals(hull[0])) {
+        break;
+      }
     }
-    dq[--bot] = points[i];
-
-    while (isLeft(dq[top - 1], dq[top], points[i]) <= 0) {
-      --top;
-    }
-    dq[++top] = points[i];
-  }
-
-  for (var count = 0; count <= (top - bot); count++) {
-    rv[count] = dq[bot + count].pos;
-  }
-  console.log('Calculated convex hull with ' + (count - 1) + ' on ' + len + ' points in ' + (new Date() - t1) + 'ms');
-  return rv;
-};
+    return hull;
+  };
